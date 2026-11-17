@@ -22,7 +22,12 @@ param(
     # Link-time optimization. 'default' keeps Pumpkin's own release profile (fat LTO, ~14 GB RAM at the final
     # link). 'thin' uses far less memory and time for a slightly less optimized binary; 'off' uses the least.
     [ValidateSet('default', 'fat', 'thin', 'off')]
-    [string]$Lto           = 'default'
+    [string]$Lto           = 'default',
+    # Maximum parallel rustc jobs (0 = cargo's default, one per CPU). Fewer jobs lowers peak memory.
+    [int]$Jobs             = 0,
+    # Symbol stripping. 'default' keeps Pumpkin's profile (debuginfo only). 'symbols' gives a much smaller binary.
+    [ValidateSet('default', 'none', 'debuginfo', 'symbols')]
+    [string]$Strip         = 'default'
 )
 
 # Native tools (rustup, cargo, git) write progress to stderr, which Windows PowerShell 5.1 would treat
@@ -94,6 +99,15 @@ $env:CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER = $clang
 if ($Lto -ne 'default') {
     $env:CARGO_PROFILE_RELEASE_LTO = $Lto
     Write-Host "Overriding release profile: lto = $Lto"
+}
+
+if ($Strip -ne 'default') {
+    $env:CARGO_PROFILE_RELEASE_STRIP = $Strip
+    Write-Host "Overriding release profile: strip = $Strip"
+}
+if ($Jobs -gt 0) {
+    $env:CARGO_BUILD_JOBS = "$Jobs"
+    Write-Host "Limiting cargo to $Jobs parallel job(s)"
 }
 
 Push-Location $PumpkinDir
