@@ -25,12 +25,21 @@ on:
         type: choice
         options: [default, none, debuginfo, symbols]
         default: default
+      data_opt_level:
+        description: opt-level for the pumpkin-data crate only (it is the build's memory peak)
+        type: choice
+        options: [default, '0', '1', '2', '3', s, z]
+        default: default
+      data_codegen_units:
+        description: codegen-units for the pumpkin-data crate only (0 = Pumpkin's default)
+        required: false
+        default: '0'
   push:
     tags:
       - 'v*'
 
 concurrency:
-  group: build-${{ github.ref }}-${{ inputs.lto || 'default' }}-${{ inputs.jobs || '0' }}-${{ inputs.strip || 'default' }}
+  group: build-${{ github.ref }}-${{ inputs.lto || 'default' }}-${{ inputs.jobs || '0' }}-${{ inputs.strip || 'default' }}-${{ inputs.data_opt_level || 'default' }}-${{ inputs.data_codegen_units || '0' }}
   cancel-in-progress: false
 
 permissions:
@@ -70,8 +79,13 @@ jobs:
           LTO: ${{ inputs.lto || 'default' }}
           JOBS: ${{ inputs.jobs || '0' }}
           STRIP: ${{ inputs.strip || 'default' }}
+          DATA_OPT: ${{ inputs.data_opt_level || 'default' }}
+          DATA_CGU: ${{ inputs.data_codegen_units || '0' }}
         run: |
           $buildArgs = @{}
+          if ($env:DATA_CGU -notmatch '^[0-9]{1,3}$') { throw 'data_codegen_units must be a non-negative integer.' }
+          $buildArgs['DataCodegenUnits'] = [int]$env:DATA_CGU
+          $buildArgs['DataOptLevel'] = $env:DATA_OPT
           if ($env:JOBS -notmatch '^[0-9]{1,2}$') { throw 'jobs must be a small non-negative integer.' }
           $buildArgs['Jobs'] = [int]$env:JOBS
           $buildArgs['Strip'] = $env:STRIP
@@ -119,7 +133,7 @@ jobs:
             $v = (Get-Content $peakFile) -split ' '
             $gb = { param($b) '{0:N1} GB' -f ([double]$b / 1GB) }
             $lines = @(
-              "### Build stats (lto = $env:LTO, jobs = $env:JOBS, strip = $env:STRIP)",
+              "### Build stats (lto = $env:LTO, jobs = $env:JOBS, strip = $env:STRIP, data opt = $env:DATA_OPT, data cgu = $env:DATA_CGU)",
               "- Build time: $([int]$clock.Elapsed.TotalMinutes) min",
               "- Peak memory of the compiler/linker processes: $(& $gb $v[0])",
               "- Largest single rustc process: $(& $gb $v[3]) (crate: $($v[4]))",

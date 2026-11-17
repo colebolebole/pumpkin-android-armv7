@@ -27,7 +27,12 @@ param(
     [int]$Jobs             = 0,
     # Symbol stripping. 'default' keeps Pumpkin's profile (debuginfo only). 'symbols' gives a much smaller binary.
     [ValidateSet('default', 'none', 'debuginfo', 'symbols')]
-    [string]$Strip         = 'default'
+    [string]$Strip         = 'default',
+    # The pumpkin-data crate (huge generated tables) is the memory peak of the whole build. These two options
+    # change only how that crate is compiled. 'default' / 0 keep Pumpkin's own profile.
+    [ValidateSet('default', '0', '1', '2', '3', 's', 'z')]
+    [string]$DataOptLevel  = 'default',
+    [int]$DataCodegenUnits = 0
 )
 
 # Native tools (rustup, cargo, git) write progress to stderr, which Windows PowerShell 5.1 would treat
@@ -110,9 +115,20 @@ if ($Jobs -gt 0) {
     Write-Host "Limiting cargo to $Jobs parallel job(s)"
 }
 
+$cargoConfig = @()
+if ($DataOptLevel -ne 'default') {
+    $v = if ($DataOptLevel -match '^[0-3]$') { $DataOptLevel } else { "'$DataOptLevel'" }
+    $cargoConfig += '--config', "profile.release.package.pumpkin-data.opt-level=$v"
+    Write-Host "Overriding release profile: pumpkin-data opt-level = $DataOptLevel"
+}
+if ($DataCodegenUnits -gt 0) {
+    $cargoConfig += '--config', "profile.release.package.pumpkin-data.codegen-units=$DataCodegenUnits"
+    Write-Host "Overriding release profile: pumpkin-data codegen-units = $DataCodegenUnits"
+}
+
 Push-Location $PumpkinDir
 try {
-    cargo rustc --release --target $Target -p pumpkin --bin pumpkin -- -C "link-arg=$shimObj"
+    cargo rustc --release --target $Target -p pumpkin --bin pumpkin @cargoConfig -- -C "link-arg=$shimObj"
     Assert-Ok 'cargo build'
 } finally {
     Pop-Location
