@@ -63,6 +63,21 @@ The script was developed and tested on Windows. For other hosts, the same recipe
 `armv7a-linux-androideabi21-clang`, compile the shim with it, and build with
 `cargo rustc --release --target armv7-linux-androideabi -p pumpkin --bin pumpkin -- -C link-arg=<path-to-shim.o>`.
 
+## Building with GitHub Actions
+
+The workflow in [`.github/workflows/build.yml`](.github/workflows/build.yml) runs `build.ps1` on a GitHub-hosted
+Windows runner. You can use it from your own fork:
+
+- **Build only:** go to *Actions → Build Android armv7 → Run workflow*. The binary and its checksum are attached to
+  the run as the `pumpkin-armv7-android` artifact (kept for 30 days).
+- **Build and publish a release:** enter a `release_tag` such as `v0.2.3` when running the workflow, or push a tag
+  that starts with `v`. The binary and `SHA256SUMS.txt` are attached to a GitHub release for that tag.
+- **Different Pumpkin version:** set `pumpkin_commit` to a full 40-character upstream commit hash. The default is the
+  commit pinned in `build.ps1`.
+
+The final link step needs a lot of memory (about 14 GB on my machine) and a clean build takes 25 minutes or more, so
+a hosted runner is close to its limit. If a run is killed for running out of memory, re-run it or build locally.
+
 ## Source and license
 
 Pumpkin is licensed under the GNU GPL v3, and so is this repository (see [LICENSE](LICENSE)).
