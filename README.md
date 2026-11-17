@@ -78,6 +78,17 @@ Windows runner. You can use it from your own fork:
 The final link step needs a lot of memory (about 14 GB on my machine) and a clean build takes 25 minutes or more, so
 a hosted runner is close to its limit. If a run is killed for running out of memory, re-run it or build locally.
 
+### Automatic update check
+
+[`.github/workflows/check-upstream.yml`](.github/workflows/check-upstream.yml) runs daily and looks at the latest
+stable (non-prerelease) Pumpkin release. If it is newer than our latest release and not built yet, it starts a
+build-only run and opens an issue containing the command to publish it. Releases made from upstream releases are
+tagged `v<upstream tag>`, for example `v0.2.3+26.3-26.65`.
+
+By default nothing is published without you. To publish automatically after a successful build, set `AUTO_PUBLISH`
+to `'true'` at the top of that workflow. GitHub pauses scheduled workflows in repositories with no activity for 60
+days; re-enable it from the Actions tab if that happens.
+
 ## Source and license
 
 Pumpkin is licensed under the GNU GPL v3, and so is this repository (see [LICENSE](LICENSE)).

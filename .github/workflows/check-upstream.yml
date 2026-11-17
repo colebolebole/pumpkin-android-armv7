@@ -1,0 +1,106 @@
+name: Check for new Pumpkin release
+
+on:
+  schedule:
+    - cron: '17 6 * * *'   # daily, 06:17 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Only print what would happen; start no build and open no issue
+        type: boolean
+        default: false
+      skip_age_check:
+        description: Testing aid. Ignore the "upstream release is older than our latest release" rule
+        type: boolean
+        default: false
+
+env:
+  # false: start a build-only run and open an issue with the command to publish it (you review first).
+  # true:  also publish the release automatically when the build succeeds.
+  AUTO_PUBLISH: 'false'
+
+permissions:
+  contents: read
+  actions: write   # start the build workflow
+  issues: write    # open the "new release" issue
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check upstream and start a build if there is a new stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          SKIP_AGE_CHECK: ${{ inputs.skip_age_check }}
+        run: |
+          set -euo pipefail
+          UPSTREAM=Pumpkin-MC/Pumpkin
+
+          # Latest stable (non-draft, non-prerelease) upstream release. Excludes the rolling nightly/canary tags.
+          read -r TAG PUBLISHED < <(gh api "repos/$UPSTREAM/releases/latest" --jq '[.tag_name, .published_at] | @tsv')
+          if ! [[ "$TAG" =~ ^[0-9A-Za-z._+-]+$ ]]; then
+            echo "Unexpected upstream tag: $TAG" >&2
+            exit 1
+          fi
+          OUR_TAG="v$TAG"
+          echo "Latest upstream stable release: $TAG (published $PUBLISHED)"
+
+          if gh release view "$OUR_TAG" >/dev/null 2>&1; then
+            echo "We already have release $OUR_TAG. Nothing to do."
+            exit 0
+          fi
+
+          if [ "${SKIP_AGE_CHECK:-false}" != "true" ]; then
+            OURS=$(gh release list --limit 1 --json publishedAt --jq '.[0].publishedAt // empty')
+            if [ -n "$OURS" ] && [[ ! "$PUBLISHED" > "$OURS" ]]; then
+              echo "Upstream release $TAG ($PUBLISHED) is not newer than our latest release ($OURS). Nothing to do."
+              exit 0
+            fi
+          fi
+
+          ENCODED=$(jq -rn --arg t "$TAG" '$t | @uri')
+          SHA=$(gh api "repos/$UPSTREAM/commits/$ENCODED" --jq .sha)
+          if ! [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Could not resolve $TAG to a commit (got: $SHA)" >&2
+            exit 1
+          fi
+
+          TITLE="New Pumpkin release $TAG"
+          EXISTING=$(gh issue list --state all --search "\"$TITLE\" in:title" --json number --jq 'length')
+          if [ "$EXISTING" != "0" ]; then
+            echo "An issue for $TAG already exists. Not starting another build."
+            exit 0
+          fi
+
+          echo "New upstream release $TAG at commit $SHA."
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            echo "Dry run: would start a build for $SHA and open the issue \"$TITLE\" (AUTO_PUBLISH=$AUTO_PUBLISH)."
+            exit 0
+          fi
+
+          if [ "$AUTO_PUBLISH" = "true" ]; then
+            gh workflow run build.yml -f pumpkin_commit="$SHA" -f release_tag="$OUR_TAG"
+            ACTION="A build was started and will publish release \`$OUR_TAG\` automatically if it succeeds."
+          else
+            gh workflow run build.yml -f pumpkin_commit="$SHA"
+            ACTION="A build-only run was started. Nothing is published until you do it yourself."
+          fi
+
+          cat > issue.md <<EOF
+          Pumpkin published release \`$TAG\` upstream: https://github.com/$UPSTREAM/releases/tag/$ENCODED
+
+          Commit: \`$SHA\`
+
+          $ACTION See the [build runs](https://github.com/$GH_REPO/actions/workflows/build.yml).
+
+          If the build succeeds, publish it with:
+
+          \`\`\`
+          gh workflow run build.yml --repo $GH_REPO -f pumpkin_commit=$SHA -f release_tag=$OUR_TAG
+          \`\`\`
+
+          If it fails, the new version probably needs a change (for example another Android compatibility shim).
+          EOF
+          gh issue create --title "$TITLE" --body-file issue.md
