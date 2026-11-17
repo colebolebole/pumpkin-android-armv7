@@ -19,20 +19,16 @@ param(
     [string]$NdkDir        = (Join-Path $WorkDir 'android-ndk'),
     [string]$PumpkinCommit = '87f8822ac36da62102350977be2f62f155a303dc',
     [int]$ApiLevel         = 21,
-    # Link-time optimization. 'default' keeps Pumpkin's own release profile (fat LTO, ~14 GB RAM at the final
-    # link). 'thin' uses far less memory and time for a slightly less optimized binary; 'off' uses the least.
+    # Link-time optimization. 'thin' (default here) builds about 3x faster than Pumpkin's own profile, which is
+    # fat LTO ('fat' or 'default' selects that). 'off' is the fastest and gives the largest binary.
     [ValidateSet('default', 'fat', 'thin', 'off')]
-    [string]$Lto           = 'default',
-    # Maximum parallel rustc jobs (0 = cargo's default, one per CPU). Fewer jobs lowers peak memory.
+    [string]$Lto           = 'thin',
+    # Maximum parallel rustc jobs (0 = cargo's default, one per CPU). Fewer jobs lowers peak memory a little.
     [int]$Jobs             = 0,
-    # Symbol stripping. 'default' keeps Pumpkin's profile (debuginfo only). 'symbols' gives a much smaller binary.
+    # Symbol stripping. 'symbols' (default here) gives a much smaller binary (~78 MB vs ~118 MB with thin LTO), but
+    # panic backtraces lose function names. 'default' keeps Pumpkin's profile (debuginfo only).
     [ValidateSet('default', 'none', 'debuginfo', 'symbols')]
-    [string]$Strip         = 'default',
-    # The pumpkin-data crate (huge generated tables) is the memory peak of the whole build. These two options
-    # change only how that crate is compiled. 'default' / 0 keep Pumpkin's own profile.
-    [ValidateSet('default', '0', '1', '2', '3', 's', 'z')]
-    [string]$DataOptLevel  = 'default',
-    [int]$DataCodegenUnits = 0
+    [string]$Strip         = 'symbols'
 )
 
 # Native tools (rustup, cargo, git) write progress to stderr, which Windows PowerShell 5.1 would treat
@@ -115,20 +111,9 @@ if ($Jobs -gt 0) {
     Write-Host "Limiting cargo to $Jobs parallel job(s)"
 }
 
-$cargoConfig = @()
-if ($DataOptLevel -ne 'default') {
-    $v = if ($DataOptLevel -match '^[0-3]$') { $DataOptLevel } else { "'$DataOptLevel'" }
-    $cargoConfig += '--config', "profile.release.package.pumpkin-data.opt-level=$v"
-    Write-Host "Overriding release profile: pumpkin-data opt-level = $DataOptLevel"
-}
-if ($DataCodegenUnits -gt 0) {
-    $cargoConfig += '--config', "profile.release.package.pumpkin-data.codegen-units=$DataCodegenUnits"
-    Write-Host "Overriding release profile: pumpkin-data codegen-units = $DataCodegenUnits"
-}
-
 Push-Location $PumpkinDir
 try {
-    cargo rustc --release --target $Target -p pumpkin --bin pumpkin @cargoConfig -- -C "link-arg=$shimObj"
+    cargo rustc --release --target $Target -p pumpkin --bin pumpkin -- -C "link-arg=$shimObj"
     Assert-Ok 'cargo build'
 } finally {
     Pop-Location

@@ -40,8 +40,8 @@ offered to Bedrock's WebRTC networking.
 
 ## Building it yourself
 
-Requirements: Windows x64, `git`, Rust via [rustup](https://rustup.rs), about 10 GB of free disk and roughly
-16 GB of RAM (the final crate peaks near 14 GB).
+Requirements: Windows x64, `git`, Rust via [rustup](https://rustup.rs), about 10 GB of free disk and 12 GB or more of
+RAM (peak is about 8 GB for the compiler, plus the OS).
 
 ```powershell
 ./build.ps1
@@ -56,7 +56,10 @@ This will:
 5. build `pumpkin` and link the shim in,
 6. write `dist/pumpkin-armv7-android` and `dist/SHA256SUMS.txt`.
 
-A clean build takes roughly 20-30 minutes. Options: `-PumpkinCommit`, `-ApiLevel`, `-WorkDir`, `-PumpkinDir`, `-NdkDir`.
+A clean build takes roughly 20-30 minutes. Options: `-PumpkinCommit`, `-ApiLevel`, `-WorkDir`, `-PumpkinDir`,
+`-NdkDir`, and the build-profile options `-Lto` (`thin` by default; `fat` or `default` is Pumpkin's own profile),
+`-Strip` (`symbols` by default) and `-Jobs`. For example, `./build.ps1 -Lto default -Strip default` builds with
+Pumpkin's own release profile, which needs much more time. The v0.2.2 release was built that way.
 
 The script was developed and tested on Windows. For other hosts, the same recipe applies: point the target linker
 (`CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER`) and `CC_`/`AR_` variables at the NDK's
@@ -75,8 +78,24 @@ Windows runner. You can use it from your own fork:
 - **Different Pumpkin version:** set `pumpkin_commit` to a full 40-character upstream commit hash. The default is the
   commit pinned in `build.ps1`.
 
-The final link step needs a lot of memory (about 14 GB on my machine) and a clean build takes 25 minutes or more, so
-a hosted runner is close to its limit. If a run is killed for running out of memory, re-run it or build locally.
+CI builds use thin LTO, stripped symbols and 2 parallel jobs by default. The workflow has inputs to change each of
+them, and every run reports its build time, peak memory and binary size in the run summary.
+
+Measured on a standard GitHub Windows runner (4 CPUs, 16 GB RAM):
+
+| LTO | Other settings | Build time | Peak memory (all compiler processes) | Binary |
+|---|---|---|---|---|
+| fat (Pumpkin's own profile) | debuginfo stripped | 57 min | 9.5 GB | 87 MB |
+| thin | debuginfo stripped | 24 min | 9.0 GB | 118 MB |
+| thin | symbols stripped (default here) | 18 min | 8.5 GB | 78 MB |
+| thin | debuginfo stripped, 2 jobs | 25 min | 8.0 GB | 118 MB |
+| thin | debuginfo stripped, 1 job | 50 min | 7.9 GB | 118 MB |
+| off | debuginfo stripped | 14 min | 8.4 GB | 131 MB |
+
+Memory has a floor of about 8 GB: compiling the `pumpkin-data` crate alone takes about 7.8 GB in a single rustc
+process, whatever the LTO setting, job count, optimization level or codegen-unit count. LTO mostly affects build time
+and binary size. Thin LTO should run slightly slower than fat LTO at runtime; I haven't measured it. Stripped symbols
+mean panic backtraces show no function names; use `strip: debuginfo` for a debuggable build.
 
 ### Automatic update check
 
