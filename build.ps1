@@ -18,7 +18,11 @@ param(
     [string]$PumpkinDir    = (Join-Path $WorkDir 'Pumpkin'),
     [string]$NdkDir        = (Join-Path $WorkDir 'android-ndk'),
     [string]$PumpkinCommit = '87f8822ac36da62102350977be2f62f155a303dc',
-    [int]$ApiLevel         = 21
+    [int]$ApiLevel         = 21,
+    # Link-time optimization. 'default' keeps Pumpkin's own release profile (fat LTO, ~14 GB RAM at the final
+    # link). 'thin' uses far less memory and time for a slightly less optimized binary; 'off' uses the least.
+    [ValidateSet('default', 'fat', 'thin', 'off')]
+    [string]$Lto           = 'default'
 )
 
 # Native tools (rustup, cargo, git) write progress to stderr, which Windows PowerShell 5.1 would treat
@@ -86,6 +90,11 @@ $env:CC_armv7_linux_androideabi  = $clang
 $env:CXX_armv7_linux_androideabi = $clangxx
 $env:AR_armv7_linux_androideabi  = Join-Path $bin 'llvm-ar.exe'
 $env:CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER = $clang
+
+if ($Lto -ne 'default') {
+    $env:CARGO_PROFILE_RELEASE_LTO = $Lto
+    Write-Host "Overriding release profile: lto = $Lto"
+}
 
 Push-Location $PumpkinDir
 try {

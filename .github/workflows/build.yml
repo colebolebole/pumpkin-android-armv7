@@ -11,12 +11,17 @@ on:
         description: Publish a GitHub release with this tag (e.g. v0.2.3). Leave empty to only build.
         required: false
         default: ''
+      lto:
+        description: Link-time optimization (default = Pumpkin's own profile, i.e. fat LTO)
+        type: choice
+        options: [default, fat, thin, 'off']
+        default: default
   push:
     tags:
       - 'v*'
 
 concurrency:
-  group: build-${{ github.ref }}
+  group: build-${{ github.ref }}-${{ inputs.lto || 'default' }}
   cancel-in-progress: false
 
 permissions:
@@ -53,6 +58,7 @@ jobs:
         shell: powershell
         env:
           PUMPKIN_COMMIT: ${{ inputs.pumpkin_commit }}
+          LTO: ${{ inputs.lto || 'default' }}
         run: |
           $buildArgs = @{}
           if ($env:PUMPKIN_COMMIT) {
@@ -61,8 +67,49 @@ jobs:
             }
             $buildArgs['PumpkinCommit'] = $env:PUMPKIN_COMMIT
           }
-          ./build.ps1 @buildArgs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $buildArgs['Lto'] = $env:LTO
+
+          # Sample memory in the background so every run reports its peak usage.
+          $peakFile = Join-Path $env:RUNNER_TEMP 'peak.txt'
+          $sampler = Start-Job -ArgumentList $peakFile -ScriptBlock {
+            param($file)
+            $peakProc = 0; $peakSys = 0
+            while ($true) {
+              $p = (Get-Process rustc, cargo, clang, ld.lld -ErrorAction SilentlyContinue |
+                    Measure-Object -Property WorkingSet64 -Sum).Sum
+              $os = Get-CimInstance Win32_OperatingSystem
+              $sys = ($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) * 1KB
+              if ($p -gt $peakProc) { $peakProc = $p }
+              if ($sys -gt $peakSys) { $peakSys = $sys }
+              "$peakProc $peakSys $($os.TotalVisibleMemorySize * 1KB)" | Set-Content $file
+              Start-Sleep -Seconds 5
+            }
+          }
+          $clock = [Diagnostics.Stopwatch]::StartNew()
+          try {
+            ./build.ps1 @buildArgs
+            $buildExit = $LASTEXITCODE
+          } finally {
+            $clock.Stop()
+            Stop-Job $sampler; Remove-Job $sampler -Force
+          }
+
+          if (Test-Path $peakFile) {
+            $v = (Get-Content $peakFile) -split ' '
+            $gb = { param($b) '{0:N1} GB' -f ([double]$b / 1GB) }
+            $lines = @(
+              "### Build stats (lto = $env:LTO)",
+              "- Build time: $([int]$clock.Elapsed.TotalMinutes) min",
+              "- Peak memory of the compiler/linker processes: $(& $gb $v[0])",
+              "- Peak system memory in use: $(& $gb $v[1]) of $(& $gb $v[2])"
+            )
+            if (Test-Path dist/pumpkin-armv7-android) {
+              $lines += "- Binary size: $('{0:N1} MB' -f ((Get-Item dist/pumpkin-armv7-android).Length / 1MB))"
+            }
+            $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            $lines
+          }
+          if ($buildExit -ne 0) { exit $buildExit }
 
       - name: Collect build info
         id: info
@@ -105,6 +152,7 @@ jobs:
           COMMIT: ${{ needs.build.outputs.pumpkin_commit }}
           SHA256: ${{ needs.build.outputs.sha256 }}
           TARGET_SHA: ${{ github.sha }}
+          LTO: ${{ inputs.lto || 'default' }}
         run: |
           set -euo pipefail
           if ! [[ "$TAG" =~ ^v[0-9A-Za-z._+-]+$ ]]; then
@@ -121,6 +169,7 @@ jobs:
 
           - **Target:** \`armv7-linux-androideabi\`, built against Android API 21, so it runs on **Android 5.0 and newer**
           - **Built from:** upstream commit [\`${COMMIT:0:7}\`](https://github.com/Pumpkin-MC/Pumpkin/tree/${COMMIT}) plus the \`getifaddrs\` shim in this repo (IPv4 interfaces only)
+          - **Link-time optimization:** \`$LTO\` (\`default\` is Pumpkin's own release profile, fat LTO)
           - **Not tested on an Android device yet.** Please report crashes with your device, Android version and output.
 
           SHA-256: \`${SHA256}\` (also in \`SHA256SUMS.txt\`).
